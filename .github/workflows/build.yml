@@ -1,0 +1,55 @@
+name: Build DBF Splitter
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller --onefile --windowed --name "DBF_Splitter" app.py
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBF_Splitter_Windows
+          path: dist/DBF_Splitter.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build Mac App
+        run: pyinstaller --onefile --windowed --name "DBF_Splitter" app.py
+
+      - name: Zip the Mac app
+        run: zip -r DBF_Splitter_Mac.zip dist/DBF_Splitter
+
+      - name: Upload Mac App
+        uses: actions/upload-artifact@v4
+        with:
+          name: DBF_Splitter_Mac
+          path: DBF_Splitter_Mac.zip
