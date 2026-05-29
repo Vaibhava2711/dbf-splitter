@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-
   build-windows:
     runs-on: windows-latest
     steps:
@@ -16,18 +15,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller==6.10.0
 
       - name: Build EXE
-        run: pyinstaller --onefile --windowed --name "DBF_Splitter" app.py
+        # --add-data ensures dbf_engine.py is bundled (semicolon = Windows separator)
+        run: pyinstaller --onefile --windowed --name "DBF_Splitter" --add-data "dbf_engine.py;." app.py
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
           name: DBF_Splitter_Windows
           path: dist/DBF_Splitter.exe
+          retention-days: 30
 
   build-mac:
     runs-on: macos-latest
@@ -38,18 +40,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller==6.10.0
 
       - name: Build Mac App
-        run: pyinstaller --onefile --windowed --name "DBF_Splitter" app.py
+        # No --onefile on Mac: produces a proper .app bundle users can double-click
+        # --add-data uses colon separator on Mac/Linux
+        run: pyinstaller --windowed --name "DBF_Splitter" --add-data "dbf_engine.py:." app.py
 
       - name: Zip the Mac app
-        run: zip -r DBF_Splitter_Mac.zip dist/DBF_Splitter
+        # Zip the .app bundle (directory), not a plain binary
+        run: zip -r DBF_Splitter_Mac.zip dist/DBF_Splitter.app
 
       - name: Upload Mac App
         uses: actions/upload-artifact@v4
         with:
           name: DBF_Splitter_Mac
           path: DBF_Splitter_Mac.zip
+          retention-days: 30
