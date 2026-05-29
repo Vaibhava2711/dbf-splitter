@@ -9,7 +9,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from dbf_engine import read_dbf_header, split_cams, split_karvy
+from dbf_engine import read_dbf_header, split_cams, split_karvy, create_cams_zips, create_karvy_zips
 
 
 # ──────────────────────────────────────────────────────────────
@@ -144,6 +144,11 @@ class DBFSplitterApp(tk.Tk):
         self._field_num = tk.IntVar(value=77)
         self._karvy_start = tk.IntVar(value=1)
         self._karvy_prefix = tk.StringVar(value="")
+        self._tiff_path = tk.StringVar()
+        self._create_zips = tk.BooleanVar(value=False)
+        self._karvy_tiff_path = tk.StringVar()
+        self._karvy_split_results = []   # stored after karvy split completes
+        self._karvy_out_dir = ""
         self._running = False
         self._header_cache = None
 
@@ -183,6 +188,7 @@ class DBFSplitterApp(tk.Tk):
         self._build_file_section()
         self._build_cams_section()
         self._build_karvy_section()
+        self._build_karvy_zip_section()
         self._build_preview_section()
         self._build_run_section()
         self._build_log()
@@ -308,9 +314,272 @@ class DBFSplitterApp(tk.Tk):
 
         tk.Label(b, text="The tool auto-detects the total field count from the file.",
                  font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).grid(
-                     row=2, column=0, sticky="w")
+                     row=2, column=0, sticky="w", pady=(0, 10))
 
-    def _build_karvy_section(self):
+        # Separator
+        tk.Frame(b, bg=C["border"], height=1).grid(
+            row=3, column=0, sticky="ew", pady=(0, 10))
+
+        # ZIP creation toggle
+        zip_row = tk.Frame(b, bg=C["surface"])
+        zip_row.grid(row=4, column=0, sticky="w", pady=(0, 8))
+        self._zip_chk = tk.Checkbutton(
+            zip_row, text="Create ZIP files after splitting",
+            variable=self._create_zips,
+            font=FONT_BOLD, bg=C["surface"], fg=C["cams"],
+            activebackground=C["surface"], selectcolor=C["surface"],
+            cursor="hand2", command=self._on_zip_toggle,
+        )
+        self._zip_chk.pack(side="left")
+
+        # TIFF selection (shown only when zip is enabled)
+        self._tiff_frame = tk.Frame(b, bg=C["surface"])
+        self._tiff_frame.grid(row=5, column=0, sticky="ew", pady=(0, 4))
+
+        tk.Label(self._tiff_frame, text="Master TIFF file  (copied into every ZIP)",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text2"]).pack(anchor="w")
+        tiff_row = tk.Frame(self._tiff_frame, bg=C["surface"])
+        tiff_row.pack(fill="x", pady=(3, 0))
+        self._tiff_entry = tk.Entry(
+            tiff_row, textvariable=self._tiff_path, font=FONT_BODY,
+            bg=C["surface2"], fg=C["text"], relief="flat",
+            highlightbackground=C["border"], highlightthickness=1,
+        )
+        self._tiff_entry.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 6))
+        tk.Button(tiff_row, text="Browse...", font=FONT_SMALL,
+                  bg=C["cams_light"], fg=C["cams"], relief="flat",
+                  cursor="hand2", padx=10, pady=5,
+                  command=self._browse_tiff).pack(side="right")
+
+        tk.Label(self._tiff_frame,
+                 text="The TIFF will be renamed to match each output file and placed inside its ZIP folder.",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"],
+                 wraplength=500, justify="left").pack(anchor="w", pady=(4, 0))
+
+        b.columnconfigure(0, weight=1)
+
+        # Hide tiff frame initially
+        self._tiff_frame.grid_remove()
+
+    def _on_zip_toggle(self):
+        if self._create_zips.get():
+            self._tiff_frame.grid()
+        else:
+            self._tiff_frame.grid_remove()
+
+    def _browse_tiff(self):
+        path = filedialog.askopenfilename(
+            title="Select master TIFF file",
+            filetypes=[("TIFF files", "*.tiff *.tif"), ("All files", "*.*")],
+        )
+        if path:
+            self._tiff_path.set(path)
+
+    def _build_karvy_zip_section(self):
+        self._karvy_zip_sec = SectionFrame(
+            self._main, "Karvy — Step 2: Create ZIPs", accent=C["karvy"])
+        self._karvy_zip_sec.pack(fill="x", pady=(0, 10))
+        b = self._karvy_zip_sec.body
+
+        # Status label shown before split is done
+        self._karvy_zip_status = tk.Label(
+            b, text="Complete Step 1 (split DBF) first, then create ZIPs here.",
+            font=FONT_SMALL, bg=C["surface"], fg=C["text3"])
+        self._karvy_zip_status.pack(anchor="w", pady=(0, 6))
+
+        # Inner frame — locked until split done
+        self._karvy_zip_inner = tk.Frame(b, bg=C["surface"])
+        self._karvy_zip_inner.pack(fill="x")
+
+        # Ref numbers + Folio numbers side by side
+        cols = tk.Frame(self._karvy_zip_inner, bg=C["surface"])
+        cols.pack(fill="x", pady=(0, 10))
+
+        # Ref numbers
+        lf = tk.Frame(cols, bg=C["surface"])
+        lf.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        tk.Label(lf, text="Reference numbers  (one per line)",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text2"]).pack(anchor="w")
+        tk.Label(lf, text="Used as ZIP name and folder name",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).pack(anchor="w")
+        self._ref_text = tk.Text(
+            lf, font=FONT_MONO, height=8, width=22,
+            bg=C["surface2"], fg=C["text"], relief="flat",
+            highlightbackground=C["border"], highlightthickness=1,
+            padx=6, pady=6,
+        )
+        self._ref_text.pack(fill="both", expand=True, pady=(4, 0))
+
+        # Folio numbers
+        rf = tk.Frame(cols, bg=C["surface"])
+        rf.pack(side="left", fill="both", expand=True)
+        tk.Label(rf, text="Folio numbers  (one per line)",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text2"]).pack(anchor="w")
+        tk.Label(rf, text="Used as TIFF filename inside folder",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).pack(anchor="w")
+        self._folio_text = tk.Text(
+            rf, font=FONT_MONO, height=8, width=22,
+            bg=C["surface2"], fg=C["text"], relief="flat",
+            highlightbackground=C["border"], highlightthickness=1,
+            padx=6, pady=6,
+        )
+        self._folio_text.pack(fill="both", expand=True, pady=(4, 0))
+
+        # TIFF selection
+        tk.Label(self._karvy_zip_inner, text="Master TIFF file",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text2"]).pack(anchor="w")
+        tiff_row = tk.Frame(self._karvy_zip_inner, bg=C["surface"])
+        tiff_row.pack(fill="x", pady=(3, 10))
+        self._karvy_tiff_entry = tk.Entry(
+            tiff_row, textvariable=self._karvy_tiff_path, font=FONT_BODY,
+            bg=C["surface2"], fg=C["text"], relief="flat",
+            highlightbackground=C["border"], highlightthickness=1,
+        )
+        self._karvy_tiff_entry.pack(side="left", fill="x", expand=True, ipady=5, padx=(0, 6))
+        tk.Button(tiff_row, text="Browse...", font=FONT_SMALL,
+                  bg=C["karvy_light"], fg=C["karvy"], relief="flat",
+                  cursor="hand2", padx=10, pady=5,
+                  command=self._browse_karvy_tiff).pack(side="right")
+
+        # Create ZIPs button
+        self._karvy_zip_btn = tk.Button(
+            self._karvy_zip_inner,
+            text="Create ZIPs",
+            font=("Segoe UI", 11, "bold"),
+            bg=C["karvy"], fg="white", relief="flat",
+            activebackground="#0D5C52", activeforeground="white",
+            cursor="hand2", padx=20, pady=10,
+            command=self._start_karvy_zips,
+        )
+        self._karvy_zip_btn.pack(anchor="w")
+
+        # Lock inner frame initially
+        self._set_karvy_zip_locked(True)
+
+    def _set_karvy_zip_locked(self, locked: bool):
+        state = "disabled" if locked else "normal"
+        for widget in self._iter_widgets(self._karvy_zip_inner):
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+        if locked:
+            self._karvy_zip_status.configure(
+                text="Complete Step 1 (split DBF) first, then create ZIPs here.",
+                fg=C["text3"])
+        else:
+            count = len(self._karvy_split_results)
+            self._karvy_zip_status.configure(
+                text=f"Step 1 done — {count} DBF(s) split. Now fill in ref/folio numbers and create ZIPs.",
+                fg=C["success"])
+
+    def _iter_widgets(self, parent):
+        """Recursively yield all child widgets."""
+        for child in parent.winfo_children():
+            yield child
+            yield from self._iter_widgets(child)
+
+    def _browse_karvy_tiff(self):
+        path = filedialog.askopenfilename(
+            title="Select master TIFF file",
+            filetypes=[("TIFF files", "*.tiff *.tif"), ("All files", "*.*")],
+        )
+        if path:
+            self._karvy_tiff_path.set(path)
+
+    def _start_karvy_zips(self):
+        if self._running:
+            return
+
+        tiff = self._karvy_tiff_path.get()
+        if not tiff:
+            messagebox.showerror("Missing TIFF", "Please select a master TIFF file.")
+            return
+        if not os.path.exists(tiff):
+            messagebox.showerror("TIFF not found", f"Cannot find:\n{tiff}")
+            return
+
+        # Parse ref and folio numbers
+        ref_numbers = [l.strip() for l in self._ref_text.get("1.0", "end").splitlines()
+                       if l.strip()]
+        folio_numbers = [l.strip() for l in self._folio_text.get("1.0", "end").splitlines()
+                         if l.strip()]
+
+        n = len(self._karvy_split_results)
+
+        if len(ref_numbers) == 0:
+            messagebox.showerror("Missing data", "Please enter reference numbers.")
+            return
+        if len(folio_numbers) == 0:
+            messagebox.showerror("Missing data", "Please enter folio numbers.")
+            return
+        if len(ref_numbers) != n:
+            messagebox.showerror(
+                "Count mismatch",
+                f"Reference numbers: {len(ref_numbers)}\n"
+                f"Split DBFs: {n}\n\n"
+                f"These must match exactly.")
+            return
+        if len(folio_numbers) != n:
+            messagebox.showerror(
+                "Count mismatch",
+                f"Folio numbers: {len(folio_numbers)}\n"
+                f"Split DBFs: {n}\n\n"
+                f"These must match exactly.")
+            return
+
+        self._running = True
+        self._karvy_zip_btn.configure(state="disabled", text="Creating ZIPs...")
+        self._progress["value"] = 0
+        self._log.append("-" * 60, "head")
+        self._log.append(f"  Karvy ZIP creation — {n} ZIPs to create", "info")
+
+        threading.Thread(
+            target=self._run_karvy_zips,
+            args=(ref_numbers, folio_numbers, tiff, self._karvy_out_dir),
+            daemon=True,
+        ).start()
+
+    def _run_karvy_zips(self, ref_numbers, folio_numbers, tiff, out_dir):
+        ok = err = 0
+        try:
+            def progress(done, total_):
+                pct = min(100, int(done / max(total_, 1) * 100))
+                self.after(0, self._set_progress, pct, done, total_)
+
+            for zresult in create_karvy_zips(
+                self._karvy_split_results, ref_numbers, folio_numbers,
+                tiff, out_dir, progress
+            ):
+                if zresult.success:
+                    ok += 1
+                    self.after(0, self._log.append,
+                               f"  ZIP  {zresult.name}.zip", "ok")
+                else:
+                    err += 1
+                    self.after(0, self._log.append,
+                               f"  ERR  {zresult.name}: {zresult.error}", "err")
+
+        except ValueError as ve:
+            self.after(0, self._log.append, f"x  {ve}", "err")
+            self.after(0, self._finish_karvy_zips, 0, 1)
+            return
+        except Exception as e:
+            self.after(0, self._log.append, f"x  Fatal error: {e}", "err")
+            err += 1
+
+        self.after(0, self._finish_karvy_zips, ok, err)
+
+    def _finish_karvy_zips(self, ok, err):
+        self._running = False
+        self._karvy_zip_btn.configure(state="normal", text="Create ZIPs")
+        self._progress["value"] = 100
+        tag = "ok" if err == 0 else "warn"
+        self._log.append("-" * 60, "head")
+        self._log.append(f"  ZIPs done.  {ok} created.  {err} error(s).", tag)
+        self._status_lbl.configure(text=f"ZIPs done - {ok} created, {err} errors")
+
+
         self._karvy_sec = SectionFrame(self._main, "Karvy options", accent=C["karvy"])
         self._karvy_sec.pack(fill="x", pady=(0, 10))
         b = self._karvy_sec.body
@@ -405,12 +674,12 @@ class DBFSplitterApp(tk.Tk):
                 child.configure(bg=btn._light if active else C["surface"])
 
         if mode == "cams":
-            self._cams_sec.pack(fill="x", pady=(0, 10),
-                                before=self._prev_sec)
+            self._cams_sec.pack(fill="x", pady=(0, 10), before=self._prev_sec)
             self._karvy_sec.pack_forget()
+            self._karvy_zip_sec.pack_forget()
         else:
-            self._karvy_sec.pack(fill="x", pady=(0, 10),
-                                 before=self._prev_sec)
+            self._karvy_sec.pack(fill="x", pady=(0, 10), before=self._prev_sec)
+            self._karvy_zip_sec.pack(fill="x", pady=(0, 10), before=self._prev_sec)
             self._cams_sec.pack_forget()
 
     # ─── File browsing ────────────────────────────────────────
@@ -498,6 +767,16 @@ class DBFSplitterApp(tk.Tk):
             messagebox.showerror("File not found", f"Cannot find:\n{path}")
             return
 
+        # Validate TIFF if zip creation is enabled (CAMS only)
+        if self._mode.get() == "cams" and self._create_zips.get():
+            tiff = self._tiff_path.get()
+            if not tiff:
+                messagebox.showerror("Missing TIFF", "Please select a master TIFF file for ZIP creation.")
+                return
+            if not os.path.exists(tiff):
+                messagebox.showerror("TIFF not found", f"Cannot find:\n{tiff}")
+                return
+
         self._running = True
         self._run_btn.configure(state="disabled", text="Processing...")
         self._progress["value"] = 0
@@ -515,6 +794,7 @@ class DBFSplitterApp(tk.Tk):
 
     def _run_split(self, path, out_dir, mode):
         ok = err = 0
+        split_results = []
         try:
             hdr = read_dbf_header(path)
             total = hdr.num_records or 1
@@ -529,7 +809,7 @@ class DBFSplitterApp(tk.Tk):
                     self.after(0, self._log.append,
                                f"x  Field {field_num} does not exist "
                                f"(file has {len(hdr.fields)} fields).", "err")
-                    self.after(0, self._finish_split, 0, 1)
+                    self.after(0, self._finish_split, 0, 1, mode, [])
                     return
                 gen = split_cams(path, field_num, out_dir, progress)
             else:
@@ -543,6 +823,7 @@ class DBFSplitterApp(tk.Tk):
             for result in gen:
                 if result.success:
                     ok += 1
+                    split_results.append(result)
                     fname = os.path.basename(result.output_file)
                     self.after(0, self._log.append,
                                f"  OK  Row {result.row_index + 1:>5}  ->  {fname}", "ok")
@@ -551,18 +832,46 @@ class DBFSplitterApp(tk.Tk):
                     self.after(0, self._log.append,
                                f"  ERR Row {result.row_index + 1}: {result.error}", "err")
 
+            # CAMS ZIP creation (automatic, if enabled)
+            if mode == "cams" and self._create_zips.get() and split_results:
+                tiff = self._tiff_path.get()
+                self.after(0, self._log.append, "-" * 60, "head")
+                self.after(0, self._log.append,
+                           f"  Creating {len(split_results)} ZIP file(s)...", "info")
+                self.after(0, self._set_progress, 0, 0, len(split_results))
+
+                zip_ok = zip_err = 0
+
+                def zip_progress(done, total_):
+                    pct = min(100, int(done / max(total_, 1) * 100))
+                    self.after(0, self._set_progress, pct, done, total_)
+
+                for zresult in create_cams_zips(split_results, tiff, out_dir, zip_progress):
+                    if zresult.success:
+                        zip_ok += 1
+                        self.after(0, self._log.append,
+                                   f"  ZIP  {zresult.name}.zip", "ok")
+                    else:
+                        zip_err += 1
+                        self.after(0, self._log.append,
+                                   f"  ERR  {zresult.name}: {zresult.error}", "err")
+
+                self.after(0, self._log.append,
+                           f"  ZIPs done.  {zip_ok} created.  {zip_err} error(s).",
+                           "ok" if zip_err == 0 else "warn")
+
         except Exception as e:
             self.after(0, self._log.append, f"x  Fatal error: {e}", "err")
             err += 1
 
-        self.after(0, self._finish_split, ok, err)
+        self.after(0, self._finish_split, ok, err, mode, split_results)
 
     def _set_progress(self, pct, done, total):
         self._progress["value"] = pct
         self._status_lbl.configure(
             text=f"{done} / {total} rows  ({pct}%)")
 
-    def _finish_split(self, ok, err):
+    def _finish_split(self, ok, err, mode="", split_results=None):
         self._running = False
         self._run_btn.configure(state="normal", text="  Start splitting")
         self._progress["value"] = 100
@@ -572,6 +881,13 @@ class DBFSplitterApp(tk.Tk):
             f"  Done.  {ok} file(s) created.  {err} error(s).", tag)
         self._status_lbl.configure(
             text=f"Done - {ok} created, {err} errors")
+
+        # Unlock Karvy ZIP section if karvy split succeeded
+        if mode == "karvy" and split_results:
+            self._karvy_split_results = split_results
+            self._karvy_out_dir = self._output_dir.get() or os.path.dirname(
+                self._input_path.get())
+            self._set_karvy_zip_locked(False)
 
 
 if __name__ == "__main__":
