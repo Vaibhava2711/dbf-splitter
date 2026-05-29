@@ -9,7 +9,7 @@ Usage:
 import argparse
 import os
 import sys
-from dbf_engine import read_dbf_header, split_cams, split_karvy, create_cams_zips, create_karvy_zips
+from dbf_engine import read_dbf_header, split_cams, split_karvy  # removed unused create_cams_zips, create_karvy_zips
 
 
 def cmd_info(args):
@@ -38,6 +38,12 @@ def cmd_cams(args):
         sys.exit(1)
 
     hdr = read_dbf_header(args.file)
+
+    # FIX: validate field number before indexing hdr.fields to avoid IndexError crash
+    if args.field < 1 or args.field > len(hdr.fields):
+        print(f"ERROR: field {args.field} out of range (file has {len(hdr.fields)} fields).", file=sys.stderr)
+        sys.exit(1)
+
     print(f"CAMS mode  |  {len(hdr.fields)} fields  |  {hdr.num_records} records")
     print(f"Naming by field {args.field}  ({hdr.fields[args.field-1][0]})")
     print(f"Output -> {args.out}\n")
