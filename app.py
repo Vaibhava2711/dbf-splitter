@@ -579,7 +579,7 @@ class DBFSplitterApp(tk.Tk):
         self._log.append(f"  ZIPs done.  {ok} created.  {err} error(s).", tag)
         self._status_lbl.configure(text=f"ZIPs done - {ok} created, {err} errors")
 
-
+    def _build_karvy_section(self):
         self._karvy_sec = SectionFrame(self._main, "Karvy options", accent=C["karvy"])
         self._karvy_sec.pack(fill="x", pady=(0, 10))
         b = self._karvy_sec.body
