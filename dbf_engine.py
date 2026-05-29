@@ -174,7 +174,9 @@ def split_karvy(
 ) -> Generator[SplitResult, None, None]:
     """
     Karvy mode.
-    One output DBF per row. Output filename = prefix + sequential number.
+    One output DBF per row. Output filename = AMC code (column 1) for that row.
+    If multiple rows share the same AMC code, suffixes _2, _3 ... are appended
+    so no file is ever overwritten.
     Works with any number of fields — full original header preserved.
     Yields SplitResult for each row processed.
     """
@@ -182,6 +184,13 @@ def split_karvy(
     out_header = _make_output_header(header, 1)
 
     os.makedirs(output_dir, exist_ok=True)
+
+    # Track how many times each AMC code has been seen this run
+    amc_counts: dict = {}
+
+    # AMC code is always field 1 — offset 1 (skip delete flag), length = fields[0][2]
+    amc_offset = 1
+    amc_length = header.fields[0][2] if header.fields else 0
 
     with open(input_file, "rb") as f:
         f.seek(header.header_len)
@@ -192,8 +201,23 @@ def split_karvy(
             if not record or len(record) < header.record_len or record[0] == 0x1A:
                 break
 
-            seq = start_index + row_index
-            filename = f"{prefix}{seq}.dbf"
+            # Read AMC code from column 1
+            raw_amc = record[amc_offset: amc_offset + amc_length]
+            amc_code = raw_amc.decode("ascii", errors="ignore").strip()
+            if not amc_code:
+                amc_code = f"row_{row_index + 1}"
+
+            amc_code = _sanitize_filename(amc_code)
+
+            # First occurrence = no suffix, subsequent = _2, _3 ...
+            count = amc_counts.get(amc_code, 0) + 1
+            amc_counts[amc_code] = count
+
+            if count == 1:
+                filename = f"{amc_code}.dbf"
+            else:
+                filename = f"{amc_code}_{count}.dbf"
+
             out_path = os.path.join(output_dir, filename)
 
             try:
@@ -205,14 +229,14 @@ def split_karvy(
                     success=True,
                     output_file=out_path,
                     row_index=row_index,
-                    field_value=str(seq),
+                    field_value=amc_code,
                 )
             except Exception as e:
                 yield SplitResult(
                     success=False,
                     output_file=out_path,
                     row_index=row_index,
-                    field_value=str(seq),
+                    field_value=amc_code,
                     error=str(e),
                 )
 
