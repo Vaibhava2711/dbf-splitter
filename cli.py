@@ -9,7 +9,7 @@ Usage:
 import argparse
 import os
 import sys
-from dbf_engine import read_dbf_header, split_cams, split_karvy
+from dbf_engine import read_dbf_header, split_cams, split_karvy, create_cams_zips, create_karvy_zips
 
 
 def cmd_info(args):
