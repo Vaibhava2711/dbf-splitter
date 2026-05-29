@@ -6,6 +6,8 @@ Works with any DBF file regardless of number of fields.
 """
 
 import os
+import shutil
+import zipfile
 from dataclasses import dataclass, field
 from typing import Generator
 
@@ -217,3 +219,126 @@ def split_karvy(
             row_index += 1
             if progress_callback:
                 progress_callback(row_index, header.num_records)
+
+
+@dataclass
+class ZipResult:
+    success: bool
+    zip_file: str
+    name: str
+    error: str = ""
+
+
+def create_cams_zips(
+    split_results: list,
+    tiff_source: str,
+    output_dir: str = ".",
+    progress_callback=None,
+) -> Generator[ZipResult, None, None]:
+    """
+    CAMS zip creation.
+    For each SplitResult, creates:
+      <output_dir>/<name>.zip
+        └── <name>/
+              └── <name>.tiff   (copied from tiff_source)
+
+    split_results : list of SplitResult from split_cams()
+    tiff_source   : path to the single master TIFF file
+    Yields ZipResult for each zip created.
+    """
+    if not os.path.exists(tiff_source):
+        raise FileNotFoundError(f"TIFF file not found: {tiff_source}")
+
+    tiff_ext = os.path.splitext(tiff_source)[1]   # preserve .tiff or .tif
+
+    total = len(split_results)
+    for idx, result in enumerate(split_results):
+        name = os.path.splitext(os.path.basename(result.output_file))[0]
+        zip_path = os.path.join(output_dir, f"{name}.zip")
+
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                # folder/file path inside the zip
+                inner_tiff = f"{name}/{name}{tiff_ext}"
+                zf.write(tiff_source, inner_tiff)
+
+            yield ZipResult(success=True, zip_file=zip_path, name=name)
+
+        except Exception as e:
+            yield ZipResult(success=False, zip_file=zip_path, name=name, error=str(e))
+
+        if progress_callback:
+            progress_callback(idx + 1, total)
+
+
+def create_karvy_zips(
+    split_results: list,
+    ref_numbers: list,
+    folio_numbers: list,
+    tiff_source: str,
+    output_dir: str = ".",
+    progress_callback=None,
+) -> Generator[ZipResult, None, None]:
+    """
+    Karvy zip creation.
+    For each split DBF, creates:
+      <output_dir>/<ref_number>.zip
+        └── <ref_number>/
+              └── <folio_number>.tiff   (copied from tiff_source)
+
+    split_results : list of SplitResult from split_karvy()
+    ref_numbers   : list of strings, one per row — used as zip name and folder name
+    folio_numbers : list of strings, one per row — used as tiff filename inside folder
+    tiff_source   : path to the single master TIFF file
+
+    Raises ValueError if counts don't match.
+    Yields ZipResult for each zip created.
+    """
+    if not os.path.exists(tiff_source):
+        raise FileNotFoundError(f"TIFF file not found: {tiff_source}")
+
+    n_splits = len(split_results)
+    n_refs   = len(ref_numbers)
+    n_folios = len(folio_numbers)
+
+    if n_refs != n_splits:
+        raise ValueError(
+            f"Ref number count ({n_refs}) does not match "
+            f"number of split DBFs ({n_splits})."
+        )
+    if n_folios != n_splits:
+        raise ValueError(
+            f"Folio number count ({n_folios}) does not match "
+            f"number of split DBFs ({n_splits})."
+        )
+
+    tiff_ext = os.path.splitext(tiff_source)[1]   # preserve .tiff or .tif
+
+    for idx, (result, ref, folio) in enumerate(
+            zip(split_results, ref_numbers, folio_numbers)):
+
+        # Sanitize ref for use as filename/folder
+        safe_ref = ref.strip()
+        for ch in r'<>:"/\\|?*':
+            safe_ref = safe_ref.replace(ch, "")
+        safe_ref = safe_ref.strip(". ") or f"ref_{idx + 1}"
+
+        safe_folio = folio.strip()
+        for ch in r'<>:"/\\|?*':
+            safe_folio = safe_folio.replace(ch, "")
+        safe_folio = safe_folio.strip(". ") or f"folio_{idx + 1}"
+
+        zip_path = os.path.join(output_dir, f"{safe_ref}.zip")
+
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                inner_tiff = f"{safe_ref}/{safe_folio}{tiff_ext}"
+                zf.write(tiff_source, inner_tiff)
+
+            yield ZipResult(success=True, zip_file=zip_path, name=safe_ref)
+
+        except Exception as e:
+            yield ZipResult(success=False, zip_file=zip_path, name=safe_ref, error=str(e))
+
+        if progress_callback:
+            progress_callback(idx + 1, n_splits)
