@@ -142,8 +142,6 @@ class DBFSplitterApp(tk.Tk):
         self._input_path = tk.StringVar()
         self._output_dir = tk.StringVar()
         self._field_num = tk.IntVar(value=77)
-        self._karvy_start = tk.IntVar(value=1)
-        self._karvy_prefix = tk.StringVar(value="")
         self._tiff_path = tk.StringVar()
         self._create_zips = tk.BooleanVar(value=False)
         self._karvy_tiff_path = tk.StringVar()
@@ -579,40 +577,18 @@ class DBFSplitterApp(tk.Tk):
         self._log.append(f"  ZIPs done.  {ok} created.  {err} error(s).", tag)
         self._status_lbl.configure(text=f"ZIPs done - {ok} created, {err} errors")
 
-    def _build_karvy_section(self):
+
         self._karvy_sec = SectionFrame(self._main, "Karvy options", accent=C["karvy"])
         self._karvy_sec.pack(fill="x", pady=(0, 10))
         b = self._karvy_sec.body
 
-        cols = tk.Frame(b, bg=C["surface"])
-        cols.pack(fill="x")
-
-        # Start index
-        lf = tk.Frame(cols, bg=C["surface"])
-        lf.pack(side="left", padx=(0, 16))
-        tk.Label(lf, text="Start number", font=FONT_SMALL,
-                 bg=C["surface"], fg=C["text2"]).pack(anchor="w")
-        tk.Spinbox(lf, from_=0, to=99999, textvariable=self._karvy_start,
-                   width=8, font=FONT_BODY, relief="flat",
-                   highlightbackground=C["border"], highlightthickness=1,
-                   bg=C["surface2"], fg=C["text"],
-                   ).pack(ipady=4)
-
-        # Prefix
-        rf = tk.Frame(cols, bg=C["surface"])
-        rf.pack(side="left")
-        tk.Label(rf, text="Filename prefix  (optional)",
+        tk.Label(b, text="Output files are named using the AMC code from column 1 of each row.",
                  font=FONT_SMALL, bg=C["surface"], fg=C["text2"]).pack(anchor="w")
-        pfx_entry = tk.Entry(
-            rf, textvariable=self._karvy_prefix, width=16, font=FONT_BODY,
-            bg=C["surface2"], fg=C["text"], relief="flat",
-            highlightbackground=C["border"], highlightthickness=1,
-        )
-        pfx_entry.pack(ipady=4)
-        Tooltip(pfx_entry, 'Leave blank for 1.dbf, 2.dbf ...\nSet row_ for row_1.dbf, row_2.dbf ...')
-
-        tk.Label(b, text='Example: prefix "INV_", start 100  ->  INV_100.dbf, INV_101.dbf ...',
-                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).pack(anchor="w", pady=(8, 0))
+        tk.Label(b,
+                 text="If multiple rows share the same AMC code, suffixes _2, _3 ... are added automatically.",
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).pack(anchor="w", pady=(4, 0))
+        tk.Label(b, text='Example: HDFC.dbf, ICICI.dbf, HDFC_2.dbf, HDFC_3.dbf ...',
+                 font=FONT_SMALL, bg=C["surface"], fg=C["text3"]).pack(anchor="w", pady=(4, 0))
 
     def _build_preview_section(self):
         self._prev_sec = SectionFrame(self._main, "Field preview")
@@ -815,9 +791,7 @@ class DBFSplitterApp(tk.Tk):
             else:
                 gen = split_karvy(
                     path, out_dir,
-                    self._karvy_start.get(),
-                    self._karvy_prefix.get(),
-                    progress,
+                    progress_callback=progress,
                 )
 
             for result in gen:
